@@ -247,20 +247,41 @@ bot.on(message("text"), async (ctx) => {
 process.once("SIGINT",  () => { console.log("Bot stopped (SIGINT)");  bot.stop("SIGINT");  });
 process.once("SIGTERM", () => { console.log("Bot stopped (SIGTERM)"); bot.stop("SIGTERM"); });
 
-// ── Init: load Binance symbols lalu start bot ───────────────────────────────
-console.log("⏳ Loading Binance symbols…");
-loadBinanceSymbols().then(() => {
-    // Refresh setiap 1 jam
+// ── Init: hapus webhook + launch dengan retry ────────────────────────────────
+async function startBot() {
+    console.log("⏳ Loading Binance symbols…");
+    await loadBinanceSymbols();
     setInterval(loadBinanceSymbols, 60 * 60 * 1000);
 
-    bot.launch().then(() => {
-        console.log("🤖 Bot aktif! Semua fitur siap:");
-        console.log("   📥 Video download");
-        console.log("   🎵 MP3 download (/mp3)");
-        console.log("   🧮 Math calculator (auto-detect)");
-        console.log("   💱 Currency/crypto converter (auto-detect)");
-    }).catch((err) => {
-        console.error("❌ Gagal start bot:", err.message);
-        process.exit(1);
-    });
-});
+    // Hapus webhook & drop pending updates agar tidak 409 conflict antar deployment
+    try {
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        console.log("✅ Webhook cleared, pending updates dropped");
+    } catch (e) {
+        console.log("⚠️  deleteWebhook:", e.message?.slice(0, 60));
+    }
+
+    // Retry launch hingga 5x kalau 409 (deployment overlap)
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+            await bot.launch({ dropPendingUpdates: true });
+            console.log("🤖 Bot aktif! Semua fitur siap:");
+            console.log("   📥 Video download (TikTok HD via tobyg74 v3)");
+            console.log("   🎵 MP3 download (/mp3)");
+            console.log("   🧮 Math calculator (auto-detect)");
+            console.log("   💱 Currency/crypto converter (auto-detect)");
+            return;
+        } catch (err) {
+            if (err.message?.includes("409") && attempt < 5) {
+                const wait = attempt * 5000;
+                console.log(`⚠️  409 Conflict (attempt ${attempt}), retry in ${wait / 1000}s…`);
+                await new Promise(r => setTimeout(r, wait));
+            } else {
+                console.error("❌ Gagal start bot:", err.message);
+                process.exit(1);
+            }
+        }
+    }
+}
+
+startBot();
