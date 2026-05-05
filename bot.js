@@ -10,9 +10,27 @@
 
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
+import { Readable } from "stream";
 import { downloadVideo, downloadAudio, detectPlatform, fmtSize, cleanFile, getVideoTitle } from "./handlers/downloader.js";
 import { isMathExpression, evaluateMath } from "./handlers/math.js";
 import { isConversionMessage, convertCurrency, isPriceCheckMessage, checkPrice, loadBinanceSymbols } from "./handlers/currency.js";
+
+// ── Polyfill File global (dibutuhkan @tobyg74/tiktok-api-dl di Node.js < 20) ─
+if (typeof globalThis.File === "undefined") {
+    globalThis.File = class File {
+        constructor(bits, name, options = {}) {
+            this._bits = bits.map(b => Buffer.isBuffer(b) ? b : Buffer.from(b));
+            this.name = name;
+            this.type = options.type || "";
+            this.lastModified = options.lastModified || Date.now();
+            this.size = this._bits.reduce((a, b) => a + b.byteLength, 0);
+        }
+        async text() { return Buffer.concat(this._bits).toString(); }
+        async arrayBuffer() { const buf = Buffer.concat(this._bits); return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); }
+        stream() { return Readable.from(this._bits); }
+    };
+    console.log("ℹ️  File polyfill aktif (Node.js < 20)");
+}
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TOKEN) {
