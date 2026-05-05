@@ -2,7 +2,10 @@
 nixPkgs = ["nodejs_20", "ffmpeg"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = [
+  "npm install",
+  "curl -L https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp_linux -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp && yt-dlp --version"
+]
 
 [start]
 cmd = "node bot.js"
