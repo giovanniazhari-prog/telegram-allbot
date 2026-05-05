@@ -150,6 +150,8 @@ async function downloadWithYtDlp(url, extraArgs = []) {
     const args = [
         "--no-playlist",
         "--max-filesize", "50m",
+        "--socket-timeout", "30",
+        "--retries", "3",
         "-f", "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
         "--merge-output-format", "mp4",
         "-o", outTmpl,
@@ -566,6 +568,50 @@ async function downloadTikTok(url) {
 }
 
 // ── Instagram → yt-dlp ─────────────────────────────────────────────────────
+
+// ── YouTube-specific yt-dlp: cap 480p, tanpa max-filesize, timeout 5 menit ──
+async function downloadWithYtDlpYouTube(url) {
+    const prefix  = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const outTmpl = path.join(TMP, `${prefix}.%(ext)s`);
+
+    const args = [
+        "--no-playlist",
+        "--socket-timeout", "60",
+        "--retries", "5",
+        "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "-o", outTmpl,
+        url,
+    ];
+
+    console.log(`▶️  yt-dlp YouTube (≤480p) ${url.slice(0, 60)}…`);
+
+    const ytdlpBin = process.env.YTDLP_BIN || "yt-dlp";
+    try {
+        const { stderr } = await execFileAsync(ytdlpBin, args, {
+            timeout   : 300_000,
+            maxBuffer : 20 * 1024 * 1024,
+        });
+        if (stderr) console.log("yt-dlp YouTube stderr:", stderr.slice(0, 300));
+    } catch (err) {
+        const msg = (err.stderr || err.message || "").slice(0, 400);
+        throw new Error(`yt-dlp: ${msg}`);
+    }
+
+    const files = fs.readdirSync(TMP)
+        .filter(f => f.startsWith(prefix))
+        .map(f => path.join(TMP, f));
+
+    if (!files.length) throw new Error("yt-dlp: tidak ada output file");
+
+    const file = files[0];
+    const stat  = fs.statSync(file);
+    if (stat.size === 0) throw new Error("yt-dlp: output file kosong");
+
+    const ext = path.extname(file).slice(1) || "mp4";
+    return { file, size: stat.size, ext, isImage: false };
+}
+
 async function downloadInstagram(url) {
     try {
         const result = await downloadWithYtDlp(url);
@@ -611,8 +657,8 @@ async function downloadYouTube(url) {
         console.log(`⚠️  YouTube play-dl gagal (${e.message?.slice(0, 60)}), fallback yt-dlp…`);
     }
 
-    console.log("▶️  YouTube yt-dlp fallback…");
-    return await downloadWithYtDlp(normalUrl);
+    console.log("▶️  YouTube yt-dlp fallback (≤480p, max 5min)…");
+    return await downloadWithYtDlpYouTube(normalUrl);
 }
 
 // ── Facebook → yt-dlp ──────────────────────────────────────────────────────
