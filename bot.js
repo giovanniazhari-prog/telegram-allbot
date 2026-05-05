@@ -11,9 +11,54 @@
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Readable } from "stream";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import https from "https";
+import http from "http";
+import fs from "fs";
 import { downloadVideo, downloadAudio, detectPlatform, fmtSize, cleanFile, getVideoTitle } from "./handlers/downloader.js";
 import { isMathExpression, evaluateMath } from "./handlers/math.js";
 import { isConversionMessage, convertCurrency, isPriceCheckMessage, checkPrice, loadBinanceSymbols } from "./handlers/currency.js";
+
+const execFileAsync = promisify(execFile);
+
+// ── Auto-update yt-dlp ke versi terbaru dari GitHub ─────────────────────────
+async function updateYtDlp() {
+    const dest = "/tmp/yt-dlp";
+    const url  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+    console.log("🔄 Mengunduh yt-dlp terbaru dari GitHub...");
+
+    function downloadUrl(targetUrl, filePath, redirects = 8) {
+        return new Promise((resolve, reject) => {
+            if (redirects < 0) return reject(new Error("too many redirects"));
+            const proto = targetUrl.startsWith("https") ? https : http;
+            const file  = fs.createWriteStream(filePath);
+            proto.get(targetUrl, { headers: { "User-Agent": "Mozilla/5.0" } }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    file.close(); try { fs.unlinkSync(filePath); } catch (_) {}
+                    return downloadUrl(res.headers.location, filePath, redirects - 1).then(resolve).catch(reject);
+                }
+                if (res.statusCode !== 200) {
+                    file.close();
+                    return reject(new Error(`HTTP ${res.statusCode}`));
+                }
+                res.pipe(file);
+                file.on("finish", () => file.close(resolve));
+                file.on("error", reject);
+            }).on("error", reject);
+        });
+    }
+
+    try {
+        await downloadUrl(url, dest);
+        fs.chmodSync(dest, 0o755);
+        const { stdout } = await execFileAsync(dest, ["--version"], { timeout: 10_000 });
+        process.env.YTDLP_BIN = dest;
+        console.log(`✅ yt-dlp ${stdout.trim()} siap (GitHub latest)`);
+    } catch (e) {
+        console.log(`⚠️  yt-dlp auto-update gagal: ${e.message?.slice(0, 80)}, pakai system yt-dlp`);
+    }
+}
 
 // ── Polyfill File global (dibutuhkan @tobyg74/tiktok-api-dl di Node.js < 20) ─
 if (typeof globalThis.File === "undefined") {
@@ -269,6 +314,9 @@ process.once("SIGTERM", () => { console.log("Bot stopped (SIGTERM)"); bot.stop("
 
 // ── Init: hapus webhook + launch dengan retry ────────────────────────────────
 async function startBot() {
+    // Update yt-dlp ke versi terbaru sebelum bot aktif
+    await updateYtDlp();
+
     console.log("⏳ Loading Binance symbols…");
     await loadBinanceSymbols();
     setInterval(loadBinanceSymbols, 60 * 60 * 1000);
