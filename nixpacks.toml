@@ -1,11 +1,8 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "ffmpeg", "python3"]
+nixPkgs = ["nodejs_20", "ffmpeg", "yt-dlp"]
 
 [phases.install]
-cmds = [
-  "python3 -m pip install -U yt-dlp --break-system-packages",
-  "npm install"
-]
+cmds = ["npm install"]
 
 [start]
-cmd = "bash startup.sh"
+cmd = "node bot.js"
