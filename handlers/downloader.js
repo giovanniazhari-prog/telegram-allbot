@@ -169,7 +169,7 @@ async function downloadWithYtDlp(url, extraArgs = []) {
         });
         if (stderr) console.log("yt-dlp stderr:", stderr.slice(0, 300));
     } catch (err) {
-        const msg = (err.stderr || err.message || "").slice(0, 400);
+        const msg = (err.stderr || err.message || "").slice(0, 800);
         throw new Error(`yt-dlp: ${msg}`);
     }
 
@@ -816,14 +816,16 @@ export async function downloadAudio(url) {
     try {
         await execFileAsync(ytdlpBin, [
             "--no-playlist",
+            "--socket-timeout", "30",
+            "--retries", "3",
             "-x",
             "--audio-format", "mp3",
             "--audio-quality", "0",
             "-o", outTmpl,
             normalUrl,
-        ], { timeout: 120_000, maxBuffer: 20 * 1024 * 1024 });
+        ], { timeout: 300_000, maxBuffer: 20 * 1024 * 1024 });
     } catch (err) {
-        const msg = (err.stderr || err.message || "").slice(0, 400);
+        const msg = (err.stderr || err.message || "").slice(0, 800);
         throw new Error(`yt-dlp audio: ${msg}`);
     }
 
