@@ -25,7 +25,7 @@ const execFileAsync = promisify(execFile);
 // ── Auto-update yt-dlp ke versi terbaru dari GitHub ─────────────────────────
 async function updateYtDlp() {
     const dest = "/tmp/yt-dlp";
-    const url  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+    const url  = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
     console.log("🔄 Mengunduh yt-dlp terbaru dari GitHub...");
 
     function downloadUrl(targetUrl, filePath, redirects = 8) {
