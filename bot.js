@@ -54,7 +54,7 @@ Kirim link langsung → bot download & kirim video
 Platform: YouTube, TikTok, Instagram, Facebook, Twitter/X, Reddit, Vimeo, dll
 
 🎵 *Download Audio MP3*
-/mp3 [link]
+/mp3 [link] — semua platform (YT, TikTok, IG, FB, Twitter, dll)
 
 🧮 *Kalkulator Otomatis*
 Kirim ekspresi langsung, contoh:
@@ -92,6 +92,8 @@ bot.help((ctx) => {
 *Fiat yang didukung:*
 USD, IDR, EUR, GBP, SGD, MYR, JPY, AUD, CNY, KRW, THB, PHP, VND, INR, HKD, TWD, CHF, SAR, AED, BRL, dll
 
+*/mp3 [link]* — ekstrak audio dari semua platform (YouTube, TikTok, Instagram, Facebook, Twitter/X, Reddit, dll)
+
 *Batas ukuran video/audio:* 50 MB`,
         { parse_mode: "Markdown" }
     );
@@ -103,7 +105,7 @@ bot.command("mp3", async (ctx) => {
     const urlMatch = args.match(URL_RE);
 
     if (!urlMatch) {
-        return ctx.reply("⚠️ Format: /mp3 [link video]\nContoh: /mp3 https://youtu.be/xxx");
+        return ctx.reply("⚠️ Format: /mp3 [link video]\n\nContoh:\n• /mp3 https://youtu.be/xxx\n• /mp3 https://vt.tiktok.com/xxx\n• /mp3 https://www.instagram.com/reel/xxx\n• /mp3 https://twitter.com/xxx/status/xxx");
     }
 
     const url = urlMatch[0];
