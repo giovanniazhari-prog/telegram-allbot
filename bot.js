@@ -304,6 +304,10 @@ bot.on(message("text"), async (ctx) => {
         if (TELEGRAM_LINK_RE.test(url)) return;
 
         const platform = detectPlatform(url);
+
+        // Abaikan URL yang bukan dari platform download yang didukung
+        if (platform.name === "Website") return;
+
         console.log(`📩 [${ctx.from.id}] ${platform.name}: ${url.slice(0, 80)}`);
 
         const statusMsg = await ctx.reply(renderBar(0));
