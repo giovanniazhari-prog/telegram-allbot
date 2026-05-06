@@ -109,7 +109,16 @@ export function detectPlatform(url) {
     return { name: "Website", emoji: "🌐" };
 }
 
-// ── HTTP downloader dengan redirect ─────────────────────────────────────���──
+// ── Helper: dapatkan arg cookies untuk yt-dlp ───────────────────────────────
+function getCookiesArgs() {
+    const cookiesFile = process.env.YTDLP_COOKIES_FILE;
+    if (cookiesFile && fs.existsSync(cookiesFile)) {
+        return ["--cookies", cookiesFile];
+    }
+    return [];
+}
+
+// ── HTTP downloader dengan redirect ─────────────────────────────────────────
 function downloadFromUrl(url, dest, redirects = 10, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
         if (redirects < 0) return reject(new Error("too many redirects"));
@@ -154,6 +163,7 @@ async function downloadWithYtDlp(url, extraArgs = []) {
         "-f", "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
         "--merge-output-format", "mp4",
         "-o", outTmpl,
+        ...getCookiesArgs(),
         ...extraArgs,
         url,
     ];
@@ -209,7 +219,7 @@ async function isValidVideo(filePath) {
     }
 }
 
-// ── Resolve URL pendek (vt.tiktok.com, vm.tiktok.com, dll) ─���──────────────
+// ── Resolve URL pendek (vt.tiktok.com, vm.tiktok.com, dll) ─────────────────
 async function resolveRedirect(url, maxRedirects = 8) {
     return new Promise((resolve) => {
         let redirectsLeft = maxRedirects;
@@ -296,7 +306,6 @@ async function buildSlideshowVideo(d) {
     let audioDur = hasAudio ? await getAudioDuration(audioFile) : null;
 
     // totalDur = durasi audio kalau lebih panjang dari foto × 3 detik
-    // Ini penting untuk slideshow 1 foto dengan audio panjang
     const slidesDur = imgFiles.length * PER_SLIDE;
     const totalDur  = audioDur && audioDur > slidesDur ? Math.ceil(audioDur) : slidesDur;
 
@@ -348,11 +357,10 @@ async function ensureH264(filePath) {
             filePath,
         ], { timeout: 15_000 });
         const codec = (stdout || "").trim().toLowerCase();
-        // h264 dan h265 sudah aman untuk Telegram; codec kosong atau av1 → re-encode
         if (codec === "h264" || codec === "hevc" || codec === "h265") return filePath;
         console.log(`🔄 Codec "${codec || "unknown"}" tidak didukung Telegram, re-encode ke H.264…`);
     } catch (_) {
-        return filePath; // ffprobe gagal, skip re-encode
+        return filePath;
     }
 
     const outFile = filePath.replace(/(\.\w+)?$/, "_h264.mp4");
@@ -418,13 +426,10 @@ async function downloadTikTokViaTikWM(url) {
 
     if (!d.play && !d.wmplay) throw new Error("TikWM: tidak ada URL video");
 
-    // hdplay = bvc2 (codec proprietary ByteDance, tidak ada decoder) → skip total
-    // play = H.264 no watermark | wmplay = H.264 bitrate lebih tinggi (ada watermark)
     const urls = [d.play, d.wmplay].filter(Boolean);
 
     for (const videoUrl of urls) {
         try {
-            // Skip URL yang content-type-nya audio (bukan video)
             if (await isAudioUrl(videoUrl)) {
                 console.log("⚠️  TikWM URL adalah audio, skip…");
                 continue;
@@ -511,7 +516,6 @@ async function downloadTikTokViaTobyg74(url) {
 }
 
 async function downloadTikTokViaSnapTik(url) {
-    // SnapTik API (unofficial, gratis)
     const apiUrl = `https://snaptik.app/abc2.php`;
     const res = await fetch(apiUrl, {
         method: "POST",
@@ -523,7 +527,6 @@ async function downloadTikTokViaSnapTik(url) {
         body: `url=${encodeURIComponent(url)}`,
     });
     const html = await res.text();
-    // Cari URL MP4 dari response HTML
     const matches = [...html.matchAll(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi)];
     if (!matches.length) throw new Error("SnapTik: tidak ada URL video");
 
@@ -544,21 +547,18 @@ async function downloadTikTokViaSnapTik(url) {
 }
 
 async function downloadTikTok(url) {
-    // PRIMARY: tobyg74 v3 — HEVC 720p HD (bekerja dari IP manapun via API pihak ketiga)
     try {
         return await downloadTikTokViaTobyg74(url);
     } catch (e) {
         console.log(`⚠️  tobyg74 gagal (${e.message?.slice(0, 80)}), fallback TikWM…`);
     }
 
-    // FALLBACK 1: TikWM — H.264 576p, no watermark
     try {
         return await downloadTikTokViaTikWM(url);
     } catch (e) {
         console.log(`⚠️  TikWM gagal (${e.message?.slice(0, 80)}), fallback SnapTik…`);
     }
 
-    // FALLBACK 2: SnapTik
     try {
         return await downloadTikTokViaSnapTik(url);
     } catch (e) {
@@ -568,7 +568,7 @@ async function downloadTikTok(url) {
 
 // ── Instagram → yt-dlp ─────────────────────────────────────────────────────
 
-// ── YouTube-specific yt-dlp: cap 480p, tanpa max-filesize, timeout 5 menit ──
+// ── YouTube-specific yt-dlp: cap 480p, dengan cookies ──────────────────────
 async function downloadWithYtDlpYouTube(url) {
     const prefix  = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const outTmpl = path.join(TMP, `${prefix}.%(ext)s`);
@@ -580,6 +580,7 @@ async function downloadWithYtDlpYouTube(url) {
         "-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "-o", outTmpl,
+        ...getCookiesArgs(),
         url,
     ];
 
@@ -731,7 +732,6 @@ export async function downloadVideo(url) {
 
     const result = await queues[queueKey].add(fn);
 
-
     cacheSet(url, result);
     return result;
 }
@@ -741,7 +741,9 @@ async function getTitleYtDlp(url) {
     const ytdlpBin = process.env.YTDLP_BIN || "yt-dlp";
     try {
         const { stdout } = await execFileAsync(ytdlpBin, [
-            "--no-playlist", "--print", "title", "--skip-download", url,
+            "--no-playlist", "--print", "title", "--skip-download",
+            ...getCookiesArgs(),
+            url,
         ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
         return (stdout || "").trim().slice(0, 60) || "Video";
     } catch (_) {
@@ -784,7 +786,6 @@ export async function downloadAudio(url) {
                     await downloadFromUrl(audioFmt.url, rawDest);
                     const stat = fs.statSync(rawDest);
                     if (stat.size > 0) {
-                        // Convert ke mp3 pakai ffmpeg
                         const mp3Dest = rawDest.replace(/\.\w+$/, ".mp3");
                         try {
                             await execFileAsync("ffmpeg", [
@@ -808,7 +809,7 @@ export async function downloadAudio(url) {
         }
     }
 
-    // yt-dlp extract audio → mp3
+    // yt-dlp extract audio → mp3 (dengan cookies untuk YouTube)
     const ytdlpBin = process.env.YTDLP_BIN || "yt-dlp";
     try {
         await execFileAsync(ytdlpBin, [
@@ -819,6 +820,7 @@ export async function downloadAudio(url) {
             "--audio-format", "mp3",
             "--audio-quality", "0",
             "-o", outTmpl,
+            ...getCookiesArgs(),
             normalUrl,
         ], { timeout: 300_000, maxBuffer: 20 * 1024 * 1024 });
     } catch (err) {
