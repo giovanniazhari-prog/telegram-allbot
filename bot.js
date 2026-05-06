@@ -48,10 +48,10 @@ function renderBar(pct) {
     return `${"▓".repeat(filled)}${"░".repeat(BAR_LEN - filled)} ${pct}%`;
 }
 
-// Animasi progress bar palsu — update pesan setiap beberapa detik
-// Mengembalikan { stop } untuk menghentikan animasi
+// Animasi progress bar palsu — update pesan tiap beberapa detik selama download.
+// Kalau download selesai sebelum semua step muncul, sisa step dimainkan cepat
+// baru tampil "Done!" — jadi bar pasti selalu keliatan bergerak.
 function startProgress(telegram, chatId, msgId) {
-    // Step: [persen, delay_ms sebelum step berikutnya]
     const steps = [10, 25, 40, 55, 70, 85];
     let idx = 0;
     let stopped = false;
@@ -62,25 +62,27 @@ function startProgress(telegram, chatId, msgId) {
         const pct = steps[idx++];
         telegram.editMessageText(chatId, msgId, undefined, renderBar(pct)).catch(() => {});
         if (!stopped && idx < steps.length) {
-            timer = setTimeout(tick, 3500);
+            timer = setTimeout(tick, 3000);
         }
     }
 
-    timer = setTimeout(tick, 1800);
+    // Mulai update pertama setelah 1.5 detik
+    timer = setTimeout(tick, 1500);
 
     return {
-        // done=true → tampilkan bar penuh + "Done!" lalu resolve
-        stop: (done = false) => new Promise((resolve) => {
+        // done=true → flush sisa step dengan cepat (300ms/step), lalu Done!
+        stop: (done = false) => new Promise(async (resolve) => {
             stopped = true;
             if (timer) clearTimeout(timer);
             if (done) {
-                telegram
-                    .editMessageText(chatId, msgId, undefined, `${"▓".repeat(BAR_LEN)} Done!`)
-                    .catch(() => {})
-                    .finally(resolve);
-            } else {
-                resolve();
+                const remaining = steps.slice(idx);
+                for (const pct of remaining) {
+                    await telegram.editMessageText(chatId, msgId, undefined, renderBar(pct)).catch(() => {});
+                    await new Promise(r => setTimeout(r, 300));
+                }
+                await telegram.editMessageText(chatId, msgId, undefined, `${"▓".repeat(BAR_LEN)} Done!`).catch(() => {});
             }
+            resolve();
         }),
     };
 }
