@@ -118,6 +118,13 @@ function getCookiesArgs() {
     return [];
 }
 
+// ── Helper: js-runtimes arg agar yt-dlp bisa ekstrak YouTube ────────────────
+// Node.js sudah tersedia di Railway — pakai path binary yang sedang jalan
+function getJsRuntimeArgs() {
+    const nodeBin = process.execPath; // /usr/local/bin/node atau sejenisnya
+    return ["--js-runtimes", `node:${nodeBin}`];
+}
+
 // ── HTTP downloader dengan redirect ─────────────────────────────────────────
 function downloadFromUrl(url, dest, redirects = 10, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
@@ -581,6 +588,7 @@ async function downloadWithYtDlpYouTube(url) {
         "--merge-output-format", "mp4",
         "-o", outTmpl,
         ...getCookiesArgs(),
+        ...getJsRuntimeArgs(),
         url,
     ];
 
@@ -739,10 +747,12 @@ export async function downloadVideo(url) {
 // ── getVideoTitle ──────────────────────────────────────────────────────────
 async function getTitleYtDlp(url) {
     const ytdlpBin = process.env.YTDLP_BIN || "yt-dlp";
+    const isYt = /youtube\.com|youtu\.be/i.test(url);
     try {
         const { stdout } = await execFileAsync(ytdlpBin, [
             "--no-playlist", "--print", "title", "--skip-download",
             ...getCookiesArgs(),
+            ...(isYt ? getJsRuntimeArgs() : []),
             url,
         ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
         return (stdout || "").trim().slice(0, 60) || "Video";
@@ -809,8 +819,9 @@ export async function downloadAudio(url) {
         }
     }
 
-    // yt-dlp extract audio → mp3 (dengan cookies untuk YouTube)
+    // yt-dlp extract audio → mp3 (dengan cookies + js-runtime untuk YouTube)
     const ytdlpBin = process.env.YTDLP_BIN || "yt-dlp";
+    const ytExtraArgs = isYoutube ? [...getCookiesArgs(), ...getJsRuntimeArgs()] : [...getCookiesArgs()];
     try {
         await execFileAsync(ytdlpBin, [
             "--no-playlist",
@@ -820,7 +831,7 @@ export async function downloadAudio(url) {
             "--audio-format", "mp3",
             "--audio-quality", "0",
             "-o", outTmpl,
-            ...getCookiesArgs(),
+            ...ytExtraArgs,
             normalUrl,
         ], { timeout: 300_000, maxBuffer: 20 * 1024 * 1024 });
     } catch (err) {
