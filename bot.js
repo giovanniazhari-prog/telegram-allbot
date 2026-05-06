@@ -22,6 +22,24 @@ import { isConversionMessage, convertCurrency, isPriceCheckMessage, checkPrice, 
 
 const execFileAsync = promisify(execFile);
 
+// ── Tulis cookies YouTube dari env var ke file temp ──────────────────────────
+function setupYoutubeCookies() {
+    const b64 = process.env.YOUTUBE_COOKIES_B64;
+    if (!b64) {
+        console.log("ℹ️  YOUTUBE_COOKIES_B64 tidak di-set, yt-dlp tanpa cookies");
+        return;
+    }
+    try {
+        const cookiesTxt = Buffer.from(b64, "base64").toString("utf-8");
+        const cookiesPath = "/tmp/yt_cookies.txt";
+        fs.writeFileSync(cookiesPath, cookiesTxt, { mode: 0o600 });
+        process.env.YTDLP_COOKIES_FILE = cookiesPath;
+        console.log("✅ YouTube cookies dimuat ke /tmp/yt_cookies.txt");
+    } catch (e) {
+        console.log(`⚠️  Gagal setup cookies: ${e.message}`);
+    }
+}
+
 // ── Auto-update yt-dlp ke versi terbaru dari GitHub ─────────────────────────
 async function updateYtDlp() {
     const dest = "/tmp/yt-dlp";
@@ -104,6 +122,16 @@ const bot = new Telegraf(TOKEN);
 
 const URL_RE = /https?:\/\/[^\s]+/i;
 
+// ── Regex link Telegram (t.me / telegram.me / telegram.dog) ─────────────────
+const TELEGRAM_LINK_RE = /https?:\/\/(t\.me|telegram\.me|telegram\.dog)\//i;
+
+// ── Helper: auto-delete pesan setelah N detik ────────────────────────────────
+function autoDelete(ctx, messageId, delayMs = 60_000) {
+    setTimeout(() => {
+        ctx.telegram.deleteMessage(ctx.chat.id, messageId).catch(() => {});
+    }, delayMs);
+}
+
 // ── /start ──────────────────────────────────────────────────────────────────
 bot.start((ctx) => {
     ctx.reply(
@@ -167,6 +195,10 @@ bot.command("mp3", async (ctx) => {
     }
 
     const url = urlMatch[0];
+
+    // Abaikan link Telegram
+    if (TELEGRAM_LINK_RE.test(url)) return;
+
     const platform = detectPlatform(url);
     console.log(`🎵 [${ctx.from.id}] MP3: ${url.slice(0, 80)}`);
 
@@ -225,6 +257,10 @@ bot.on(message("text"), async (ctx) => {
     // ── 2. Download video (ada URL) ────────────────────────────────────────
     if (hasUrl) {
         const url = text.match(URL_RE)[0];
+
+        // Abaikan link Telegram diam-diam
+        if (TELEGRAM_LINK_RE.test(url)) return;
+
         const platform = detectPlatform(url);
         console.log(`📩 [${ctx.from.id}] ${platform.name}: ${url.slice(0, 80)}`);
 
@@ -300,7 +336,8 @@ bot.on(message("text"), async (ctx) => {
             const res = await convertCurrency(text);
             if (res) {
                 console.log(`💱 [${ctx.from.id}] ${text.slice(0, 40)}`);
-                await ctx.reply(res.text, { parse_mode: "Markdown" });
+                const sent = await ctx.reply(res.text, { parse_mode: "Markdown" });
+                autoDelete(ctx, sent.message_id, 60_000);
             }
         } catch (e) {
             console.error(`Currency error: ${e.message}`);
@@ -314,7 +351,8 @@ bot.on(message("text"), async (ctx) => {
             const res = await checkPrice(text);
             if (res) {
                 console.log(`💰 [${ctx.from.id}] price check: ${text.slice(0, 20)}`);
-                await ctx.reply(res.text, { parse_mode: "Markdown" });
+                const sent = await ctx.reply(res.text, { parse_mode: "Markdown" });
+                autoDelete(ctx, sent.message_id, 60_000);
             }
         } catch (e) {
             console.error(`Price check error: ${e.message}`);
@@ -331,6 +369,9 @@ process.once("SIGTERM", () => { console.log("Bot stopped (SIGTERM)"); bot.stop("
 
 // ── Init: hapus webhook + launch dengan retry ────────────────────────────────
 async function startBot() {
+    // Setup cookies YouTube sebelum yt-dlp dipakai
+    setupYoutubeCookies();
+
     // Update yt-dlp ke versi terbaru sebelum bot aktif
     await updateYtDlp();
 
