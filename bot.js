@@ -60,6 +60,23 @@ async function updateYtDlp() {
     }
 }
 
+// ── Ekstrak thumbnail dari video (frame di detik ke-2) ───────────────────────
+async function extractThumbnail(videoFile) {
+    const thumbFile = videoFile.replace(/(\.\w+)?$/, "_thumb.jpg");
+    try {
+        await execFileAsync("ffmpeg", [
+            "-y", "-ss", "00:00:02", "-i", videoFile,
+            "-vframes", "1", "-q:v", "2",
+            "-vf", "scale=320:-2",
+            thumbFile,
+        ], { timeout: 15_000 });
+        if (fs.existsSync(thumbFile) && fs.statSync(thumbFile).size > 500) {
+            return thumbFile;
+        }
+    } catch (_) {}
+    return null;
+}
+
 // ── Polyfill File global (dibutuhkan @tobyg74/tiktok-api-dl di Node.js < 20) ─
 if (typeof globalThis.File === "undefined") {
     globalThis.File = class File {
@@ -85,9 +102,7 @@ if (!TOKEN) {
 
 const bot = new Telegraf(TOKEN);
 
-const URL_RE   = /https?:\/\/[^\s]+/i;
-const MAX_VIDEO_MB = 50;
-const MAX_AUDIO_MB = 50;
+const URL_RE = /https?:\/\/[^\s]+/i;
 
 // ── /start ──────────────────────────────────────────────────────────────────
 bot.start((ctx) => {
@@ -137,9 +152,7 @@ bot.help((ctx) => {
 *Fiat yang didukung:*
 USD, IDR, EUR, GBP, SGD, MYR, JPY, AUD, CNY, KRW, THB, PHP, VND, INR, HKD, TWD, CHF, SAR, AED, BRL, dll
 
-*/mp3 [link]* — ekstrak audio dari semua platform (YouTube, TikTok, Instagram, Facebook, Twitter/X, Reddit, dll)
-
-*Batas ukuran video/audio:* 50 MB`,
+*/mp3 [link]* — ekstrak audio dari semua platform (YouTube, TikTok, Instagram, Facebook, Twitter/X, Reddit, dll)`,
         { parse_mode: "Markdown" }
     );
 });
@@ -164,10 +177,6 @@ bot.command("mp3", async (ctx) => {
     let result = null;
     try {
         result = await downloadAudio(url);
-
-        if (result.size > MAX_AUDIO_MB * 1024 * 1024) {
-            throw new Error(`File terlalu besar (${fmtSize(result.size)}, max ${MAX_AUDIO_MB}MB)`);
-        }
 
         let title = "";
         try { title = await getVideoTitle(url); } catch (_) {}
@@ -225,8 +234,9 @@ bot.on(message("text"), async (ctx) => {
         );
 
         let result = null;
+        let thumbFile = null;
         try {
-            result = await downloadVideo(url, MAX_VIDEO_MB);
+            result = await downloadVideo(url);
 
             await ctx.telegram.editMessageText(
                 ctx.chat.id, statusMsg.message_id, undefined,
@@ -240,12 +250,18 @@ bot.on(message("text"), async (ctx) => {
             }
             if (!title) title = platform.name + " Video";
 
+            // Ekstrak thumbnail dari frame ke-2 supaya tidak abu-abu
+            if (!result.isImage) {
+                thumbFile = await extractThumbnail(result.file);
+            }
+
             await ctx.replyWithVideo(
                 { source: result.file },
                 {
                     caption: `${platform.emoji} *${title}*\n\n📥 Downloaded via bot`,
                     parse_mode: "Markdown",
                     supports_streaming: true,
+                    ...(thumbFile ? { thumbnail: { source: fs.createReadStream(thumbFile) } } : {}),
                 }
             );
 
@@ -261,6 +277,7 @@ bot.on(message("text"), async (ctx) => {
             ).catch(() => ctx.reply(`❌ Gagal: ${err.message?.slice(0, 200)}`));
         } finally {
             if (result?.file) cleanFile(result.file);
+            if (thumbFile) cleanFile(thumbFile);
         }
         return;
     }
