@@ -109,7 +109,7 @@ export function detectPlatform(url) {
     return { name: "Website", emoji: "🌐" };
 }
 
-// ── HTTP downloader dengan redirect ────────────────────────────────────────
+// ── HTTP downloader dengan redirect ─────────────────────────────────────���──
 function downloadFromUrl(url, dest, redirects = 10, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
         if (redirects < 0) return reject(new Error("too many redirects"));
@@ -149,7 +149,6 @@ async function downloadWithYtDlp(url, extraArgs = []) {
 
     const args = [
         "--no-playlist",
-        "--max-filesize", "50m",
         "--socket-timeout", "30",
         "--retries", "3",
         "-f", "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
@@ -210,7 +209,7 @@ async function isValidVideo(filePath) {
     }
 }
 
-// ── Resolve URL pendek (vt.tiktok.com, vm.tiktok.com, dll) ────────────────
+// ── Resolve URL pendek (vt.tiktok.com, vm.tiktok.com, dll) ─���──────────────
 async function resolveRedirect(url, maxRedirects = 8) {
     return new Promise((resolve) => {
         let redirectsLeft = maxRedirects;
@@ -715,7 +714,7 @@ async function downloadGeneric(url) {
 }
 
 // ── Main: downloadVideo ─────────────────────────────────────────────────────
-export async function downloadVideo(url, maxMb = 50) {
+export async function downloadVideo(url) {
     const cached = cacheGet(url);
     if (cached) {
         console.log(`✅ Cache hit: ${url.slice(0, 60)}`);
@@ -732,8 +731,6 @@ export async function downloadVideo(url, maxMb = 50) {
 
     const result = await queues[queueKey].add(fn);
 
-    if (result.size > maxMb * 1024 * 1024)
-        throw new Error(`File terlalu besar (${fmtSize(result.size)}, max ${maxMb}MB)`);
 
     cacheSet(url, result);
     return result;
