@@ -40,6 +40,24 @@ function setupYoutubeCookies() {
     }
 }
 
+// ── Tulis cookies Facebook dari env var ke file temp ────────────────────────────────────
+function setupFacebookCookies() {
+    const b64 = process.env.FACEBOOK_COOKIES_B64;
+    if (!b64) {
+        console.log("ℹ️  FACEBOOK_COOKIES_B64 tidak di-set, Facebook mungkin terbatas pada public videos");
+        return;
+    }
+    try {
+        const cookiesTxt = Buffer.from(b64, "base64").toString("utf-8");
+        const cookiesPath = "/tmp/fb_cookies.txt";
+        fs.writeFileSync(cookiesPath, cookiesTxt, { mode: 0o600 });
+        process.env.FACEBOOK_COOKIES_FILE = cookiesPath;
+        console.log("✅ Facebook cookies dimuat ke /tmp/fb_cookies.txt");
+    } catch (e) {
+        console.log(`⚠️  Gagal setup Facebook cookies: ${e.message}`);
+    }
+}
+
 // ── Progress bar ─────────────────────────────────────────────────────────────
 const BAR_LEN = 10;
 
@@ -412,6 +430,7 @@ process.once("SIGTERM", () => { console.log("Bot stopped (SIGTERM)"); bot.stop("
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function startBot() {
     setupYoutubeCookies();
+    setupFacebookCookies();
     await updateYtDlp();
 
     console.log("⏳ Loading Binance symbols…");
