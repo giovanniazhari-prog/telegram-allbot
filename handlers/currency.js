@@ -35,7 +35,7 @@ async function fetchJSON(url, timeout = 5000) {
 // ── Load semua crypto symbols dari Binance ─────────────────────────────────
 export async function loadBinanceSymbols() {
     try {
-        const data = await fetchJSON("https://api.binance.com/api/v3/exchangeInfo");
+        const data = await fetchJSON("https://api.binance.us/api/v3/exchangeInfo");
         const symbols = new Set();
         for (const s of data.symbols || []) {
             if (s.status === "TRADING" && s.quoteAsset === "USDT") {
@@ -74,7 +74,7 @@ function isCrypto(sym) {
 async function getCryptoPriceUsdt(symbol) {
     const up = symbol.toUpperCase();
     if (isStablecoin(up)) return 1;
-    const data = await fetchJSON(`https://api.binance.com/api/v3/ticker/price?symbol=${up}USDT`);
+    const data = await fetchJSON(`https://api.binance.us/api/v3/ticker/price?symbol=${up}USDT`);
     return parseFloat(data.price);
 }
 
