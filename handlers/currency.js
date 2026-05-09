@@ -1,328 +1,346 @@
 /**
- * Currency & Crypto Conversion Handler
- * Binance API (crypto) + fawazahmed0 (fiat)
- * Tidak butuh API key — semuanya gratis
- */
+   * Currency & Crypto Conversion Handler
+   * CoinGecko API (crypto) + fawazahmed0 (fiat)
+   * Tidak butuh API key — semuanya gratis
+   */
 
-// ── Stablecoin ─────────────────────────────────────────────────────────────
-const STABLECOINS = new Set(["USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD", "USDP"]);
+  // ── Stablecoin ─────────────────────────────────────────────────────────────
+  const STABLECOINS = new Set(["USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD", "USDP"]);
 
-// ── Fiat yang didukung ─────────────────────────────────────────────────────
-const FIAT_CURRENCIES = new Set([
-    "USD","IDR","EUR","GBP","SGD","MYR","JPY","AUD","CNY","KRW","THB",
-    "PHP","VND","INR","HKD","TWD","CHF","SEK","NOK","DKK","SAR","AED",
-    "BRL","MXN","ZAR","TRY","PLN","CZK","HUF",
-]);
+  // ── Fiat yang didukung ─────────────────────────────────────────────────────
+  const FIAT_CURRENCIES = new Set([
+      "USD","IDR","EUR","GBP","SGD","MYR","JPY","AUD","CNY","KRW","THB",
+      "PHP","VND","INR","HKD","TWD","CHF","SEK","NOK","DKK","SAR","AED",
+      "BRL","MXN","ZAR","TRY","PLN","CZK","HUF",
+  ]);
 
-// ── State: Binance symbols ─────────────────────────────────────────────────
-let BINANCE_SYMBOLS = new Set();
-let lastBinanceRefresh = 0;
-const BINANCE_TTL = 60 * 60 * 1000; // 1 jam
+  // ── State: CoinGecko symbol map ────────────────────────────────────────────
+  let COINGECKO_MAP = {};     // { "BTC": "bitcoin", "ETH": "ethereum", ... }
+  let CRYPTO_SYMBOLS = new Set();
+  let lastCoinGeckoRefresh = 0;
+  const COINGECKO_TTL = 60 * 60 * 1000; // 1 jam
 
-// ── Fetch helpers ───────────────────────────────────────────────────────────
-async function fetchJSON(url, timeout = 5000) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeout);
-    try {
-        const res = await fetch(url, { signal: ctrl.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-    } finally {
-        clearTimeout(timer);
-    }
-}
+  // ── Fetch helpers ───────────────────────────────────────────────────────────
+  async function fetchJSON(url, timeout = 8000) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeout);
+      try {
+          const res = await fetch(url, {
+              signal: ctrl.signal,
+              headers: { "Accept": "application/json" },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+      } finally {
+          clearTimeout(timer);
+      }
+  }
 
-// ── Load semua crypto symbols dari Binance ─────────────────────────────────
-export async function loadBinanceSymbols() {
-    try {
-        const data = await fetchJSON("https://api.binance.us/api/v3/exchangeInfo");
-        const symbols = new Set();
-        for (const s of data.symbols || []) {
-            if (s.status === "TRADING" && s.quoteAsset === "USDT") {
-                symbols.add(s.baseAsset.toUpperCase());
-            }
-        }
-        BINANCE_SYMBOLS = symbols;
-        lastBinanceRefresh = Date.now();
-        console.log(`✅ Loaded ${symbols.size} crypto symbols dari Binance`);
-    } catch (e) {
-        console.error("❌ Gagal load Binance symbols:", e.message);
-    }
-}
+  // ── Load top 500 crypto dari CoinGecko ─────────────────────────────────────
+  export async function loadBinanceSymbols() {
+      try {
+          // Ambil top 500 coin berdasarkan market cap (2 halaman × 250)
+          const [page1, page2] = await Promise.all([
+              fetchJSON("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false", 12000),
+              fetchJSON("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=2&sparkline=false", 12000),
+          ]);
 
-async function ensureBinanceSymbols() {
-    if (BINANCE_SYMBOLS.size === 0 || Date.now() - lastBinanceRefresh > BINANCE_TTL) {
-        await loadBinanceSymbols();
-    }
-}
+          const coins = [...(page1 || []), ...(page2 || [])];
+          const map = {};
+          const symbols = new Set();
 
-// ── Deteksi tipe currency ───────────────────────────────────────────────────
-function isFiat(sym) {
-    return FIAT_CURRENCIES.has(sym.toUpperCase());
-}
+          for (const coin of coins) {
+              const sym = coin.symbol?.toUpperCase();
+              if (!sym) continue;
+              // Pakai yang pertama muncul (market cap tertinggi)
+              if (!map[sym]) {
+                  map[sym] = coin.id;
+                  symbols.add(sym);
+              }
+          }
 
-function isStablecoin(sym) {
-    return STABLECOINS.has(sym.toUpperCase());
-}
+          // Tambahkan stablecoin manual jika belum ada
+          const stableIds = { USDT: "tether", USDC: "usd-coin", DAI: "dai", BUSD: "binance-usd" };
+          for (const [sym, id] of Object.entries(stableIds)) {
+              if (!map[sym]) { map[sym] = id; symbols.add(sym); }
+          }
 
-function isCrypto(sym) {
-    const up = sym.toUpperCase();
-    return BINANCE_SYMBOLS.has(up) || STABLECOINS.has(up);
-}
+          COINGECKO_MAP = map;
+          CRYPTO_SYMBOLS = symbols;
+          lastCoinGeckoRefresh = Date.now();
+          console.log(`✅ Loaded ${symbols.size} crypto symbols dari CoinGecko`);
+      } catch (e) {
+          console.error("❌ Gagal load CoinGecko symbols:", e.message);
+      }
+  }
 
-// ── Ambil harga crypto dalam USDT dari Binance ─────────────────────────────
-async function getCryptoPriceUsdt(symbol) {
-    const up = symbol.toUpperCase();
-    if (isStablecoin(up)) return 1;
-    const data = await fetchJSON(`https://api.binance.us/api/v3/ticker/price?symbol=${up}USDT`);
-    return parseFloat(data.price);
-}
+  async function ensureBinanceSymbols() {
+      if (CRYPTO_SYMBOLS.size === 0 || Date.now() - lastCoinGeckoRefresh > COINGECKO_TTL) {
+          await loadBinanceSymbols();
+      }
+  }
 
-// ── Ambil rate fiat via fawazahmed0 ────────────────────────────────────────
-async function getFiatRate(from, to) {
-    const f = from.toLowerCase();
-    const t = to.toLowerCase();
-    const data = await fetchJSON(
-        `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${f}.json`
-    );
-    const rate = data[f]?.[t];
-    if (!rate) throw new Error(`Rate ${from}→${to} tidak ditemukan`);
-    return rate;
-}
+  // ── Deteksi tipe currency ───────────────────────────────────────────────────
+  function isFiat(sym) {
+      return FIAT_CURRENCIES.has(sym.toUpperCase());
+  }
 
-// ── Format angka hasil konversi ─────────────────────────────────────────────
-function formatResult(num) {
-    if (!isFinite(num) || num <= 0) return null;
+  function isStablecoin(sym) {
+      return STABLECOINS.has(sym.toUpperCase());
+  }
 
-    if (num >= 1_000_000) {
-        return num.toLocaleString("id-ID", { maximumFractionDigits: 0 });
-    } else if (num >= 1_000) {
-        return num.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    } else if (num >= 1) {
-        return num.toLocaleString("id-ID", { minimumFractionDigits: 4, maximumFractionDigits: 4 }).replace(/\.?0+$/, "");
-    } else {
-        // < 1: sampai 8 desimal, trim trailing zeros
-        return num.toFixed(8).replace(/\.?0+$/, "");
-    }
-}
+  function isCrypto(sym) {
+      const up = sym.toUpperCase();
+      return CRYPTO_SYMBOLS.has(up) || STABLECOINS.has(up);
+  }
 
-// ── Pattern deteksi konversi ────────────────────────────────────────────────
-// "[angka] [mata uang] to [mata uang]"
-const CONVERSION_RE = /^([\d.,]+)\s+([a-zA-Z]{2,10})\s+to\s+([a-zA-Z]{2,10})$/i;
+  // ── Ambil harga crypto dalam USD dari CoinGecko ────────────────────────────
+  async function getCryptoPriceUsdt(symbol) {
+      const up = symbol.toUpperCase();
+      if (isStablecoin(up)) return 1;
 
-// "[angka] [token]" atau "[token]" saja → cek harga
-// Contoh: "1 btc", "0.5 eth", "1,5 sol"
-const PRICE_CHECK_RE = /^([\d.,]+\s+)?([a-zA-Z]{2,10})$/i;
+      const coinId = COINGECKO_MAP[up];
+      if (!coinId) throw new Error(`${symbol}: coin tidak ditemukan di CoinGecko`);
 
-export function isConversionMessage(text) {
-    return CONVERSION_RE.test(text.trim());
-}
+      const data = await fetchJSON(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`
+      );
+      const price = data[coinId]?.usd;
+      if (!price) throw new Error(`${symbol}: harga tidak tersedia`);
+      return price;
+  }
 
-export async function isPriceCheckMessage(text) {
-    const t = text.trim();
-    if (!PRICE_CHECK_RE.test(t)) return false;
-    await ensureBinanceSymbols();
-    const match = t.match(PRICE_CHECK_RE);
-    const sym = match[2].toUpperCase();
-    return isCrypto(sym) || isFiat(sym);
-}
+  // ── Ambil rate fiat via fawazahmed0 ────────────────────────────────────────
+  async function getFiatRate(from, to) {
+      const f = from.toLowerCase();
+      const t = to.toLowerCase();
+      const data = await fetchJSON(
+          `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${f}.json`
+      );
+      const rate = data[f]?.[t];
+      if (!rate) throw new Error(`Rate ${from}→${to} tidak ditemukan`);
+      return rate;
+  }
 
-// ── Main: convert ───────────────────────────────────────────────────────────
-export async function convertCurrency(text) {
-    await ensureBinanceSymbols();
+  // ── Format angka hasil konversi ─────────────────────────────────────────────
+  function formatResult(num) {
+      if (!isFinite(num) || num <= 0) return null;
 
-    const match = text.trim().match(CONVERSION_RE);
-    if (!match) return null;
+      if (num >= 1_000_000) {
+          return num.toLocaleString("id-ID", { maximumFractionDigits: 0 });
+      } else if (num >= 1_000) {
+          return num.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } else if (num >= 1) {
+          return num.toLocaleString("id-ID", { minimumFractionDigits: 4, maximumFractionDigits: 4 }).replace(/\.?0+$/, "");
+      } else {
+          return num.toFixed(8).replace(/\.?0+$/, "");
+      }
+  }
 
-    // Normalisasi angka: koma desimal → titik
-    const amountStr = match[1].replace(/,/g, ".");
-    const amount = parseFloat(amountStr);
-    if (isNaN(amount) || amount <= 0) return null;
+  // ── Pattern deteksi konversi ────────────────────────────────────────────────
+  const CONVERSION_RE = /^([\d.,]+)\s+([a-zA-Z]{2,10})\s+to\s+([a-zA-Z]{2,10})$/i;
+  const PRICE_CHECK_RE = /^([\d.,]+\s+)?([a-zA-Z]{2,10})$/i;
 
-    const fromSym = match[2].toUpperCase();
-    const toSym   = match[3].toUpperCase();
+  export function isConversionMessage(text) {
+      return CONVERSION_RE.test(text.trim());
+  }
 
-    const fromIsFiat   = isFiat(fromSym);
-    const toIsFiat     = isFiat(toSym);
-    const fromIsCrypto = isCrypto(fromSym);
-    const toIsCrypto   = isCrypto(toSym);
+  export async function isPriceCheckMessage(text) {
+      const t = text.trim();
+      if (!PRICE_CHECK_RE.test(t)) return false;
+      await ensureBinanceSymbols();
+      const match = t.match(PRICE_CHECK_RE);
+      const sym = match[2].toUpperCase();
+      return isCrypto(sym) || isFiat(sym);
+  }
 
-    // Harus kenal setidaknya salah satu
-    if (!fromIsFiat && !fromIsCrypto) return null;
-    if (!toIsFiat && !toIsCrypto) return null;
+  // ── Main: convert ───────────────────────────────────────────────────────────
+  export async function convertCurrency(text) {
+      await ensureBinanceSymbols();
 
-    let result;
+      const match = text.trim().match(CONVERSION_RE);
+      if (!match) return null;
 
-    try {
-        if (fromIsCrypto && toIsCrypto) {
-            // Crypto → Crypto
-            const priceA = await getCryptoPriceUsdt(fromSym);
-            const priceB = await getCryptoPriceUsdt(toSym);
-            result = amount * (priceA / priceB);
+      const amountStr = match[1].replace(/,/g, ".");
+      const amount = parseFloat(amountStr);
+      if (isNaN(amount) || amount <= 0) return null;
 
-        } else if (fromIsCrypto && toIsFiat) {
-            // Crypto → Fiat
-            const priceUsdt = await getCryptoPriceUsdt(fromSym);
-            const toUp = toSym.toUpperCase();
-            if (toUp === "USD" || isStablecoin(toUp)) {
-                result = amount * priceUsdt;
-            } else {
-                const usdToFiat = await getFiatRate("USD", toSym.toLowerCase());
-                result = amount * priceUsdt * usdToFiat;
-            }
+      const fromSym = match[2].toUpperCase();
+      const toSym   = match[3].toUpperCase();
 
-        } else if (fromIsFiat && toIsCrypto) {
-            // Fiat → Crypto
-            const fromUp = fromSym.toUpperCase();
-            let usdAmount;
-            if (fromUp === "USD" || isStablecoin(fromUp)) {
-                usdAmount = amount;
-            } else {
-                const fiatToUsd = await getFiatRate(fromSym.toLowerCase(), "usd");
-                usdAmount = amount * fiatToUsd;
-            }
-            const priceUsdt = await getCryptoPriceUsdt(toSym);
-            result = usdAmount / priceUsdt;
+      const fromIsFiat   = isFiat(fromSym);
+      const toIsFiat     = isFiat(toSym);
+      const fromIsCrypto = isCrypto(fromSym);
+      const toIsCrypto   = isCrypto(toSym);
 
-        } else {
-            // Fiat → Fiat
-            const rate = await getFiatRate(fromSym.toLowerCase(), toSym.toLowerCase());
-            result = amount * rate;
-        }
+      if (!fromIsFiat && !fromIsCrypto) return null;
+      if (!toIsFiat && !toIsCrypto) return null;
 
-        if (!isFinite(result) || result <= 0) return null;
+      let result;
 
-        const formatted = formatResult(result);
-        if (!formatted) return null;
+      try {
+          if (fromIsCrypto && toIsCrypto) {
+              const priceA = await getCryptoPriceUsdt(fromSym);
+              const priceB = await getCryptoPriceUsdt(toSym);
+              result = amount * (priceA / priceB);
 
-        // Format amount input
-        const amountDisplay = amount % 1 === 0 ? amount.toLocaleString("id-ID") : amountStr;
+          } else if (fromIsCrypto && toIsFiat) {
+              const priceUsdt = await getCryptoPriceUsdt(fromSym);
+              const toUp = toSym.toUpperCase();
+              if (toUp === "USD" || isStablecoin(toUp)) {
+                  result = amount * priceUsdt;
+              } else {
+                  const usdToFiat = await getFiatRate("USD", toSym.toLowerCase());
+                  result = amount * priceUsdt * usdToFiat;
+              }
 
-        return {
-            text: `💱 *${amountDisplay} ${fromSym}* = *${formatted} ${toSym}*`,
-        };
+          } else if (fromIsFiat && toIsCrypto) {
+              const fromUp = fromSym.toUpperCase();
+              let usdAmount;
+              if (fromUp === "USD" || isStablecoin(fromUp)) {
+                  usdAmount = amount;
+              } else {
+                  const fiatToUsd = await getFiatRate(fromSym.toLowerCase(), "usd");
+                  usdAmount = amount * fiatToUsd;
+              }
+              const priceUsdt = await getCryptoPriceUsdt(toSym);
+              result = usdAmount / priceUsdt;
 
-    } catch (e) {
-        console.error(`Currency conversion error: ${e.message}`);
-        return null;
-    }
-}
+          } else {
+              const rate = await getFiatRate(fromSym.toLowerCase(), toSym.toLowerCase());
+              result = amount * rate;
+          }
 
-// ── Simbol / emoji per crypto ───────────────────────────────────────────────
-const CRYPTO_ICON = {
-    BTC   : "₿",   ETH  : "Ξ",   BNB  : "🔶",  SOL  : "◎",
-    XRP   : "✕",   ADA  : "₳",   DOGE : "Ð",   TRX  : "◈",
-    TON   : "💎",  MATIC: "⬡",   DOT  : "●",   LTC  : "Ł",
-    AVAX  : "🔺",  LINK : "⬡",   SHIB : "🐕",  PEPE : "🐸",
-    UNI   : "🦄",  ATOM : "⚛",   XLM  : "✦",   FIL  : "⟠",
-    APT   : "🔷",  ARB  : "🔵",  OP   : "🔴",  INJ  : "🌀",
-    SUI   : "💧",  SEI  : "🔰",  WIF  : "🐕",  FLOKI: "⚡",
-};
+          if (!isFinite(result) || result <= 0) return null;
 
-// ── Flag emoji per currency ─────────────────────────────────────────────────
-const CURRENCY_FLAG = {
-    USD: "🇺🇸", IDR: "🇮🇩", EUR: "🇪🇺", GBP: "🇬🇧", SGD: "🇸🇬",
-    JPY: "🇯🇵", AUD: "🇦🇺", CNY: "🇨🇳", KRW: "🇰🇷", THB: "🇹🇭",
-    PHP: "🇵🇭", MYR: "🇲🇾", CHF: "🇨🇭", SAR: "🇸🇦", AED: "🇦🇪",
-    HKD: "🇭🇰", TWD: "🇹🇼", VND: "🇻🇳", INR: "🇮🇳", BRL: "🇧🇷",
-    MXN: "🇲🇽", TRY: "🇹🇷", ZAR: "🇿🇦", SEK: "🇸🇪", NOK: "🇳🇴",
-    DKK: "🇩🇰", PLN: "🇵🇱", CZK: "🇨🇿", HUF: "🇭🇺", NZD: "🇳🇿",
-};
+          const formatted = formatResult(result);
+          if (!formatted) return null;
 
-// ── 5 mata uang utama yang selalu ditampilkan ──────────────────────────────
-const MAIN_CURRENCIES = ["USD", "IDR", "EUR", "GBP", "SGD"];
+          const amountDisplay = amount % 1 === 0 ? amount.toLocaleString("id-ID") : amountStr;
 
-// Ambil semua rates sekaligus dari fawazahmed0 (satu request per base)
-async function getUsdRates(targets) {
-    const data = await fetchJSON(
-        `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json`
-    );
-    const rates = {};
-    for (const t of targets) {
-        const r = data["usd"]?.[t.toLowerCase()];
-        if (r) rates[t] = r;
-    }
-    return rates; // { IDR: 16200, EUR: 0.92, ... }
-}
+          return {
+              text: `💱 *${amountDisplay} ${fromSym}* = *${formatted} ${toSym}*`,
+          };
 
-// ── Cek harga: "1 btc" / "1 usd" / "0.5 eth" / "btc" ─────────────────────
-export async function checkPrice(text) {
-    await ensureBinanceSymbols();
+      } catch (e) {
+          console.error(`Currency conversion error: ${e.message}`);
+          return null;
+      }
+  }
 
-    const match = text.trim().match(PRICE_CHECK_RE);
-    if (!match) return null;
+  // ── Simbol / emoji per crypto ───────────────────────────────────────────────
+  const CRYPTO_ICON = {
+      BTC   : "₿",   ETH  : "Ξ",   BNB  : "🔶",  SOL  : "◎",
+      XRP   : "✕",   ADA  : "₳",   DOGE : "Ð",   TRX  : "◈",
+      TON   : "💎",  MATIC: "⬡",   DOT  : "●",   LTC  : "Ł",
+      AVAX  : "🔺",  LINK : "⬡",   SHIB : "🐕",  PEPE : "🐸",
+      UNI   : "🦄",  ATOM : "⚛",   XLM  : "✦",   FIL  : "⟠",
+      APT   : "🔷",  ARB  : "🔵",  OP   : "🔴",  INJ  : "🌀",
+      SUI   : "💧",  SEI  : "🔰",  WIF  : "🐕",  FLOKI: "⚡",
+  };
 
-    const amountStr = (match[1] || "1").trim().replace(/,/g, ".");
-    const amount    = parseFloat(amountStr) || 1;
-    const sym       = match[2].toUpperCase();
+  // ── Flag emoji per currency ─────────────────────────────────────────────────
+  const CURRENCY_FLAG = {
+      USD: "🇺🇸", IDR: "🇮🇩", EUR: "🇪🇺", GBP: "🇬🇧", SGD: "🇸🇬",
+      JPY: "🇯🇵", AUD: "🇦🇺", CNY: "🇨🇳", KRW: "🇰🇷", THB: "🇹🇭",
+      PHP: "🇵🇭", MYR: "🇲🇾", CHF: "🇨🇭", SAR: "🇸🇦", AED: "🇦🇪",
+      HKD: "🇭🇰", TWD: "🇹🇼", VND: "🇻🇳", INR: "🇮🇳", BRL: "🇧🇷",
+      MXN: "🇲🇽", TRY: "🇹🇷", ZAR: "🇿🇦", SEK: "🇸🇪", NOK: "🇳🇴",
+      DKK: "🇩🇰", PLN: "🇵🇱", CZK: "🇨🇿", HUF: "🇭🇺", NZD: "🇳🇿",
+  };
 
-    const symIsCrypto = isCrypto(sym);
-    const symIsFiat   = isFiat(sym);
-    if (!symIsCrypto && !symIsFiat) return null;
+  // ── 5 mata uang utama yang selalu ditampilkan ──────────────────────────────
+  const MAIN_CURRENCIES = ["USD", "IDR", "EUR", "GBP", "SGD"];
 
-    // Kode target: 5 main, kecuali mata uang itu sendiri (replace dgn yg berikutnya)
-    const targets = MAIN_CURRENCIES.filter(c => c !== sym);
-    // Kalau sym bukan di list, tetap 5; kalau sym ada di list, jadi 4 → tambah JPY
-    if (MAIN_CURRENCIES.includes(sym)) targets.push("JPY");
+  async function getUsdRates(targets) {
+      const data = await fetchJSON(
+          `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json`
+      );
+      const rates = {};
+      for (const t of targets) {
+          const r = data["usd"]?.[t.toLowerCase()];
+          if (r) rates[t] = r;
+      }
+      return rates;
+  }
 
-    try {
-        const amountDisplay = amount === 1
-            ? "1"
-            : Number.isInteger(amount)
-                ? amount.toLocaleString("id-ID")
-                : amountStr;
+  // ── Cek harga: "1 btc" / "1 usd" / "0.5 eth" / "btc" ─────────────────────
+  export async function checkPrice(text) {
+      await ensureBinanceSymbols();
 
-        const rows = []; // { flag, amount, code }
+      const match = text.trim().match(PRICE_CHECK_RE);
+      if (!match) return null;
 
-        if (symIsCrypto) {
-            const priceUsdt = await getCryptoPriceUsdt(sym);
-            const usdValue  = amount * priceUsdt;
-            const usdRates  = await getUsdRates(targets.filter(t => t !== "USD"));
+      const amountStr = (match[1] || "1").trim().replace(/,/g, ".");
+      const amount    = parseFloat(amountStr) || 1;
+      const sym       = match[2].toUpperCase();
 
-            for (const t of targets) {
-                let converted;
-                if (t === "USD") {
-                    converted = usdValue;
-                } else {
-                    const rate = usdRates[t];
-                    if (!rate) continue;
-                    converted = usdValue * rate;
-                }
-                const fmt = formatResult(converted);
-                if (fmt) rows.push({ flag: CURRENCY_FLAG[t] || "💱", fmt, code: t });
-            }
+      const symIsCrypto = isCrypto(sym);
+      const symIsFiat   = isFiat(sym);
+      if (!symIsCrypto && !symIsFiat) return null;
 
-        } else {
-            const baseLower = sym.toLowerCase();
-            const data = await fetchJSON(
-                `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseLower}.json`
-            );
+      const targets = MAIN_CURRENCIES.filter(c => c !== sym);
+      if (MAIN_CURRENCIES.includes(sym)) targets.push("JPY");
 
-            for (const t of targets) {
-                const rate = data[baseLower]?.[t.toLowerCase()];
-                if (!rate) continue;
-                const converted = amount * rate;
-                const fmt = formatResult(converted);
-                if (fmt) rows.push({ flag: CURRENCY_FLAG[t] || "💱", fmt, code: t });
-            }
-        }
+      try {
+          const amountDisplay = amount === 1
+              ? "1"
+              : Number.isInteger(amount)
+                  ? amount.toLocaleString("id-ID")
+                  : amountStr;
 
-        if (!rows.length) return null;
+          const rows = [];
 
-        const symIcon = symIsCrypto
-            ? (CRYPTO_ICON[sym] || "🪙")
-            : (CURRENCY_FLAG[sym] || "💱");
-        const lines = rows.map(r => `${r.flag}  ${r.fmt} ${r.code}`);
+          if (symIsCrypto) {
+              const priceUsdt = await getCryptoPriceUsdt(sym);
+              const usdValue  = amount * priceUsdt;
+              const usdRates  = await getUsdRates(targets.filter(t => t !== "USD"));
 
-        return {
-            text:
-                `${symIcon} *${amountDisplay} ${sym}*\n` +
-                `━━━━━━━━━━━━━━━\n` +
-                lines.join("\n"),
-        };
+              for (const t of targets) {
+                  let converted;
+                  if (t === "USD") {
+                      converted = usdValue;
+                  } else {
+                      const rate = usdRates[t];
+                      if (!rate) continue;
+                      converted = usdValue * rate;
+                  }
+                  const fmt = formatResult(converted);
+                  if (fmt) rows.push({ flag: CURRENCY_FLAG[t] || "💱", fmt, code: t });
+              }
 
-    } catch (e) {
-        console.error(`Price check error [${sym}]: ${e.message}`);
-        return null;
-    }
-}
+          } else {
+              const baseLower = sym.toLowerCase();
+              const data = await fetchJSON(
+                  `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseLower}.json`
+              );
+
+              for (const t of targets) {
+                  const rate = data[baseLower]?.[t.toLowerCase()];
+                  if (!rate) continue;
+                  const converted = amount * rate;
+                  const fmt = formatResult(converted);
+                  if (fmt) rows.push({ flag: CURRENCY_FLAG[t] || "💱", fmt, code: t });
+              }
+          }
+
+          if (!rows.length) return null;
+
+          const symIcon = symIsCrypto
+              ? (CRYPTO_ICON[sym] || "🪙")
+              : (CURRENCY_FLAG[sym] || "💱");
+          const lines = rows.map(r => `${r.flag}  ${r.fmt} ${r.code}`);
+
+          return {
+              text:
+                  `${symIcon} *${amountDisplay} ${sym}*\n` +
+                  `━━━━━━━━━━━━━━━\n` +
+                  lines.join("\n"),
+          };
+
+      } catch (e) {
+          console.error(`Price check error [${sym}]: ${e.message}`);
+          return null;
+      }
+  }
+  
