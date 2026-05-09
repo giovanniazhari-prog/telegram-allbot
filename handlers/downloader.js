@@ -669,15 +669,70 @@ async function downloadYouTube(url) {
     return await downloadWithYtDlpYouTube(normalUrl);
 }
 
-// ── Facebook → yt-dlp ──────────────────────────────────────────────────────
-async function downloadFacebook(url) {
-    try {
-        return await downloadWithYtDlp(url);
-    } catch (e) {
-        throw new Error(`Facebook gagal didownload: ${e.message?.slice(0, 100)}`);
-    }
-}
+// ── Facebook cookies helper ─────────────────────────────────────────────────
+  function getFacebookCookiesArgs() {
+      const cookiesFile = process.env.FACEBOOK_COOKIES_FILE;
+      if (cookiesFile && fs.existsSync(cookiesFile)) {
+          return ["--cookies", cookiesFile];
+      }
+      return [];
+  }
 
+  // ── Facebook → yt-dlp + SnapSave fallback ────────────────────────────────────
+  async function downloadFacebook(url) {
+      const fbCookieArgs = getFacebookCookiesArgs();
+
+      // Primary: yt-dlp (dengan optional FB cookies jika di-set via FACEBOOK_COOKIES_B64)
+      try {
+          return await downloadWithYtDlp(url, fbCookieArgs);
+      } catch (e) {
+          console.log(`⚠️  Facebook yt-dlp gagal (${e.message?.slice(0, 60)}), coba fallback…`);
+      }
+
+      // Fallback 1: yt-dlp dengan UA bot Facebook (works untuk public videos)
+      try {
+          return await downloadWithYtDlp(url, [
+              "--add-header", "User-Agent:facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+          ]);
+      } catch (e2) {
+          console.log(`⚠️  Facebook UA spoof gagal (${e2.message?.slice(0, 40)}), coba SnapSave…`);
+      }
+
+      // Fallback 2: SnapSave public API
+      try {
+          const apiRes = await fetch("https://snapsave.app/action.php", {
+              method: "POST",
+              headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                  "Referer": "https://snapsave.app/",
+                  "Origin": "https://snapsave.app",
+              },
+              body: `url=${encodeURIComponent(url)}`,
+              signal: AbortSignal.timeout(20_000),
+          });
+          if (!apiRes.ok) throw new Error(`SnapSave HTTP ${apiRes.status}`);
+          const html = await apiRes.text();
+
+          const hdMatch   = html.match(/href="(https:\/\/[^"]+)"[^>]*>[\s\S]{0,50}?HD/i);
+          const sdMatch   = html.match(/href="(https:\/\/[^"]+)"[^>]*>[\s\S]{0,50}?SD/i);
+          const mp4Match  = html.match(/href="(https:\/\/[^"]*\.mp4[^"]*)"/i);
+          const jsonMatch = html.match(/"url"\s*:\s*"(https:\/\/[^"]+\.mp4[^"]*)"/i);
+
+          const videoUrl = hdMatch?.[1] || sdMatch?.[1] || mp4Match?.[1] || jsonMatch?.[1];
+          if (!videoUrl) throw new Error("SnapSave: tidak ada URL video di respons");
+
+          const dest = path.join(TMP, `${Date.now()}_fb.mp4`);
+          await downloadFromUrl(decodeURIComponent(videoUrl), dest);
+          const stat = fs.statSync(dest);
+          if (stat.size < 10_000) throw new Error("SnapSave: file terlalu kecil");
+
+          console.log("✅ Facebook via SnapSave");
+          return { file: dest, size: stat.size, ext: "mp4", isImage: false };
+      } catch (e3) {
+          throw new Error(`Facebook gagal didownload. Pastikan video berstatus Publik. (${e3.message?.slice(0, 80)})`);
+      }
+  }
 // ── Twitter/X → yt-dlp + fallback fxtwitter ────────────────────────────────
 async function downloadTwitter(url) {
     try {
